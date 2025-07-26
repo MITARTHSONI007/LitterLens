@@ -9,8 +9,23 @@ from segment_anything import sam_model_registry, SamPredictor
 from sklearn.cluster import KMeans
 import torch
 import base64
+import os # Import os for path handling and existence checks
+
+# --- Define File Paths (assuming plain structure: all files in the same directory as streamlit_app.py) ---
+BACKGROUND_IMAGE_PATH = "photo-1507525428034-b723cf961d3e.jpeg"
+GARBAGE_YOLO_MODEL_PATH = "garbage_detection.pt"
+WATER_YOLO_MODEL_PATH = "water_detection.pt"
+SAM_CHECKPOINT_PATH = "sam_vit_b_01ec64.pth"
+# If you also have samweights.pth and it's used, define its path:
+# SAM_WEIGHTS_PATH = "samweights.pth"
+
 
 def set_background(image_path):
+    # Check if the background image exists
+    if not os.path.exists(image_path):
+        st.error(f"Background image not found at: {image_path}. Please ensure it's in the same directory as streamlit_app.py.")
+        st.stop() # Stop the app if a critical asset is missing
+
     with open(image_path, "rb") as img_file:
         encoded = base64.b64encode(img_file.read()).decode()
 
@@ -21,31 +36,43 @@ def set_background(image_path):
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
-        background-blur: 50px;
+        background-blur: 50px; /* Note: background-blur is not a standard CSS property, consider filter: blur() instead */
     }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
 
-set_background("photo-1507525428034-b723cf961d3e.jpeg")
-# ===== Load Models =====
-st.session_state.setdefault("yolo_loaded", False)
-st.session_state.setdefault("sam_loaded", False)
+# --- Load Models ---
+# Use st.cache_resource for all heavy model loading to prevent re-loading on every rerun
+@st.cache_resource
+def load_yolo_garbage_model():
+    if not os.path.exists(GARBAGE_YOLO_MODEL_PATH):
+        st.error(f"YOLO Garbage Detection Model not found at: {GARBAGE_YOLO_MODEL_PATH}. Please ensure it's in the same directory as streamlit_app.py.")
+        st.stop()
+    return YOLO(GARBAGE_YOLO_MODEL_PATH)
 
 @st.cache_resource
-def load_yolo_model():
-    return YOLO("garbage_detection.pt")  # Garbage model
+def load_yolo_water_model():
+    if not os.path.exists(WATER_YOLO_MODEL_PATH):
+        st.error(f"YOLO Water Detection Model not found at: {WATER_YOLO_MODEL_PATH}. Please ensure it's in the same directory as streamlit_app.py.")
+        st.stop()
+    return YOLO(WATER_YOLO_MODEL_PATH)
 
 @st.cache_resource
 def load_sam_model():
-    sam_checkpoint = "sam_vit_b_01ec64.pth"
-    sam = sam_model_registry["vit_b"](checkpoint=sam_checkpoint)
+    if not os.path.exists(SAM_CHECKPOINT_PATH):
+        st.error(f"SAM Checkpoint not found at: {SAM_CHECKPOINT_PATH}. Please ensure it's in the same directory as streamlit_app.py.")
+        st.stop()
+    sam = sam_model_registry["vit_b"](checkpoint=SAM_CHECKPOINT_PATH)
     sam.to("cuda" if torch.cuda.is_available() else "cpu")
     return SamPredictor(sam)
 
 
-# ===== Mode 2: Water Color Detection =====
+# --- Apply Background ---
+set_background(BACKGROUND_IMAGE_PATH)
+
+# --- Water Color Classification Logic ---
 def classify_color(rgb):
     import colorsys
     r, g, b = [x / 255.0 for x in rgb]
@@ -68,7 +95,6 @@ def classify_color(rgb):
         return "unknown"
 
 
-
 def show_color_advisory(rgb_color):
     color_category = classify_color(rgb_color)
 
@@ -85,6 +111,7 @@ def show_color_advisory(rgb_color):
         st.warning(color_advisories[color_category])
     else:
         st.info("ℹ️ No specific advisory for this color.")
+
 # ===== Streamlit UI =====
 st.set_page_config(page_title="🌿 Environmental Analyzer", layout="wide")
 
@@ -112,7 +139,8 @@ if mode == "Garbage Detection":
         st.image(uploaded_file, caption="Uploaded Image", width=400)
 
         if st.button("🚀 Detect Garbage"):
-            yolo_model = load_yolo_model()
+            # Load the cached YOLO garbage model
+            yolo_model = load_yolo_garbage_model()
             image = Image.open(uploaded_file).convert("RGB")
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
@@ -143,13 +171,14 @@ if mode == "Garbage Detection":
                 st.info("No garbage types detected.")
 
 # ===== Mode 2 UI =====
-else:
+else: # Water Color Detection
     if uploaded_file:
         st.image(uploaded_file, caption="Uploaded Image", width=400)
 
         if st.button("Detect Water Color"):
-            # Load models
-            yolo_model = YOLO("water_detection.pt")
+            # Load the cached YOLO water model
+            yolo_model = load_yolo_water_model()
+            # Load the cached SAM model
             predictor = load_sam_model()
 
             # Convert image
@@ -203,5 +232,3 @@ else:
 
             if not found:
                 st.warning("No water region detected or not enough dark pixels.")
-
-
