@@ -10,23 +10,22 @@ from sklearn.cluster import KMeans
 import torch
 import base64
 import os
-import gdown # Make sure gdown is in your requirements.txt
+import gdown # Keep if needed for other models
+from huggingface_hub import hf_hub_download # NEW IMPORT for Hugging Face
 
 # --- Define File Paths ---
 BACKGROUND_IMAGE_PATH = "photo-1507525428034-b723cf961d3e.jpeg"
 GARBAGE_YOLO_MODEL_PATH = "garbage_detection.pt"
 WATER_YOLO_MODEL_PATH = "water_detection.pt"
 
-# --- SAM Model Download URL and Local Path ---
-# IMPORTANT: Replace with the actual Google Drive ID or Hugging Face Hub URL
-# If using Google Drive:
-SAM_GDRIVE_ID = "https://drive.google.com/file/d/16kDv-cFoXl5kEltfXSpEofTsHAEYgmuR/view?usp=sharing" # Get this from sharing the file
-SAM_CHECKPOINT_PATH = "sam_vit_b_01ec64.pth" # Local path where it will be saved
+# --- SAM Model Download Configuration ---
+# IMPORTANT: Replace with YOUR Hugging Face repo_id and filename
+SAM_HF_REPO_ID = "Yourgotoguy/SAM_for_garbage" # e.g., "Yourgotoguy/LitterLens-SAM-Model"
+SAM_HF_FILENAME = "sam_vit_b_01ec64.pth"
+# The downloaded file will be cached by huggingface_hub in a local directory (e.g., ~/.cache/huggingface/hub)
+# We need to get the actual path where it's downloaded to pass to sam_model_registry
+SAM_CHECKPOINT_PATH_LOCAL = None # This will be set by hf_hub_download
 
-# If using Hugging Face Hub (more recommended):
-# SAM_HF_REPO_ID = "your-username/your-sam-model-repo"
-# SAM_HF_FILENAME = "sam_vit_b_01ec64.pth"
-# SAM_CHECKPOINT_PATH = os.path.join(os.getcwd(), SAM_HF_FILENAME) # Or a 'models' subfolder
 
 def set_background(image_path):
     if not os.path.exists(image_path):
@@ -65,38 +64,46 @@ def load_yolo_water_model():
 
 @st.cache_resource
 def load_sam_model():
-    # Attempt to download the SAM model if it doesn't exist locally
-    if not os.path.exists(SAM_CHECKPOINT_PATH):
-        st.info(f"Downloading SAM model from Google Drive (ID: {SAM_GDRIVE_ID}). This may take a moment...")
-        try:
-            # For Google Drive:
-            gdown.download(id=SAM_GDRIVE_ID, output=SAM_CHECKPOINT_PATH, quiet=False)
-            # For Hugging Face Hub (requires `huggingface_hub` package):
-            # from huggingface_hub import hf_hub_download
-            # hf_hub_download(repo_id=SAM_HF_REPO_ID, filename=SAM_HF_FILENAME, local_dir=".", local_dir_use_symlinks=False)
+    global SAM_CHECKPOINT_PATH_LOCAL # Declare global to set the path after download
 
-            st.success("SAM model downloaded successfully!")
-        except Exception as e:
-            st.error(f"Failed to download SAM model: {e}. Please check the Google Drive ID or network.")
-            st.stop()
-    else:
-        st.info("SAM model already present, loading from disk.")
-
-    if not os.path.exists(SAM_CHECKPOINT_PATH):
-        st.error(f"SAM Checkpoint not found at: {SAM_CHECKPOINT_PATH} after attempted download.")
+    # Download SAM model from Hugging Face Hub
+    st.info(f"Checking for SAM model '{SAM_HF_FILENAME}' from Hugging Face Hub '{SAM_HF_REPO_ID}'...")
+    try:
+        SAM_CHECKPOINT_PATH_LOCAL = hf_hub_download(
+            repo_id=SAM_HF_REPO_ID,
+            filename=SAM_HF_FILENAME,
+            # local_dir=".", # Optional: specify local directory, default cache is fine
+            # local_dir_use_symlinks=False, # Important if you specify local_dir
+            # etag_timeout=10, # Add a timeout if downloads get stuck
+        )
+        st.success(f"SAM model ready at: {SAM_CHECKPOINT_PATH_LOCAL}")
+    except Exception as e:
+        st.error(f"Failed to download SAM model from Hugging Face Hub: {e}")
+        st.error("Please ensure the Hugging Face repo_id and filename are correct and the model is public.")
         st.stop()
-    
+
+    # Verify that the file exists locally and is not a tiny LFS pointer (unlikely with hf_hub_download)
+    if not os.path.exists(SAM_CHECKPOINT_PATH_LOCAL):
+        st.error(f"SAM Checkpoint not found at: {SAM_CHECKPOINT_PATH_LOCAL} after attempted download.")
+        st.stop()
+    # Optional: Debugging - check actual size if you suspect a partial download
+    # st.info(f"SAM model local file size: {os.path.getsize(SAM_CHECKPOINT_PATH_LOCAL)} bytes")
+
+
     # Load the model
-    sam = sam_model_registry["vit_b"](checkpoint=SAM_CHECKPOINT_PATH)
-    sam.to("cuda" if torch.cuda.is_available() else "cpu")
-    return SamPredictor(sam)
+    try:
+        sam = sam_model_registry["vit_b"](checkpoint=SAM_CHECKPOINT_PATH_LOCAL)
+        sam.to("cuda" if torch.cuda.is_available() else "cpu")
+        return SamPredictor(sam)
+    except Exception as e:
+        st.error(f"Error loading SAM model from checkpoint: {e}")
+        st.warning("This might indicate a corrupted download, an incorrect model file, or insufficient memory during loading.")
+        st.stop()
 
 
 # --- Rest of your app code remains the same ---
-# Apply Background
 set_background(BACKGROUND_IMAGE_PATH)
 
-# Water Color Classification Logic
 def classify_color(rgb):
     import colorsys
     r, g, b = [x / 255.0 for x in rgb]
@@ -129,7 +136,6 @@ def show_color_advisory(rgb_color):
     else:
         st.info("ℹ️ No specific advisory for this color.")
 
-# Streamlit UI
 st.set_page_config(page_title="🌿 Environmental Analyzer", layout="wide")
 st.markdown("<h1 style='text-align: center; color: teal;'> Environmental Analyzer</h1>", unsafe_allow_html=True)
 st.markdown("<h4 style='text-align: center; color: gray;'>Detect Garbage or Analyze Water Color with AI</h4>", unsafe_allow_html=True)
