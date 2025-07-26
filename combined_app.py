@@ -27,7 +27,7 @@ def set_background(image_path):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# Call this with your image URL or base64-encoded image
+
 set_background("photo-1507525428034-b723cf961d3e.jpeg")
 # ===== Load Models =====
 st.session_state.setdefault("yolo_loaded", False)
